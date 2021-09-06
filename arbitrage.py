@@ -8,11 +8,17 @@ import sys
 import time
 import time
 
+from dash import dcc
+from dash import html
+import dash
+from dash.dependencies import Input, Output
 import matplotlib
 import requests
 
+import dash_bootstrap_components as dbc
 import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.express as px
 
 
 if sys.platform=='win32':
@@ -24,6 +30,7 @@ else:
 
 
 FILENAME = os.path.join(DIR, 'market.parquet')
+all_pairs = None
 
 
 class Quote:
@@ -167,13 +174,112 @@ def poll():
 
     while True:
         df = update_quotes(pd.Timestamp.fromtimestamp(ts))
-        #plot_pairs(pairs, 1)
-        #plot_pairs(pairs, 5)
-        #plot_pairs(pairs, 15)
-        #plot_pairs(pairs, 60)
         ts = wait_update()
 
 
+app = dash.Dash(__name__, external_stylesheets=[dbc.themes.COSMO],
+                title='Arbitrage',
+                #suppress_callback_exceptions=True
+                )
+
+@app.callback(
+    Output("the_graph", "children"),
+    Input("input_interval", "value"),
+    Input("input_pair", "value"),
+    Input('interval-component', 'n_intervals')
+)
+def render_graph(input_interval, input_pair, n_intervals):
+    children = []
+    pairs = [input_pair]
+    
+    master = pd.read_parquet(FILENAME)
+
+    for pair in pairs:
+        df = master
+        df = df[ df.index.get_level_values('pair')==pair ]
+        df = df.droplevel('pair')
+        
+        results = []
+        for exchange, df in df.groupby(level='exchange'):
+            if input_interval != '01min':
+                df1 = df.resample(input_interval, level='dtime',closed='right', label='right').last()
+                df1 = df1.iloc[-720:]
+                df1 = df1.reset_index()
+                df1['exchange'] = exchange
+            else:
+                df1 = df.reset_index().iloc[-1440:]
+                
+            results.append(df1)
+    
+        df = pd.concat(results)
+        fig = px.line(df, x='dtime', y='close', color='exchange', title=pair)
+        children.append(dcc.Graph(figure=fig, 
+                                  config=dict(displayModeBar=False, )
+                                  )
+                        )
+    latest = 'Latest is: ' + str(master.index.get_level_values('dtime')[-1])
+    children.append(html.Div(latest))
+    
+    return children
+
+def serve():
+    global all_pairs
+    if all_pairs is None:
+        df = pd.read_parquet(FILENAME)
+        df = df.reset_index()[['exchange', 'pair']].drop_duplicates()
+        d = defaultdict(set)
+        for _, row in df.iterrows():
+            d[ row['exchange'] ].add( row['pair'] )
+        for exchange, supported_pairs in d.items():
+            if all_pairs is None:
+                all_pairs = set(supported_pairs)
+            else:
+                all_pairs = all_pairs.intersection(supported_pairs)
+        
+    intervals = ['01min', '03min', '05min', '10min', '15min', '30min', '60min', '01d']
+    main_div = html.Div(
+        [
+        dbc.Form([
+                dbc.FormGroup([
+                        dbc.Label("Pair:", className="mr-2"),
+                        dcc.RadioItems(id='input_pair',
+                                       options=[{'label': i, 'value': i} for i in sorted(all_pairs)],
+                                       value='BTC-IDR',
+                                       className='auto',
+                                       #searchable=False,
+                                       labelStyle={"padding-right": "10px"},
+                            ),
+                    ],
+                    className="w-100",
+                ),
+                dbc.FormGroup([
+                        dbc.Label("Interval:", className="mr-2"),
+                        dcc.RadioItems(id='input_interval',
+                                       options=[{'label': i, 'value': i} for i in intervals],
+                                       value='01min',
+                                       #searchable=False,
+                                       className='auto',
+                                       labelStyle={"padding-right": "10px"},
+                                ),
+                    ],
+                    className="w-75",
+                ),
+                #dbc.Button("Submit", color="primary"),
+            ],            
+            #inline=True,
+        ),
+        html.Div(id="the_graph"),
+        dcc.Interval(
+            id='interval-component',
+            interval=60*1000, # in milliseconds
+            n_intervals=0
+        )        
+        ]
+    )
+    app.layout = dbc.Container(main_div)
+    app.run_server(host='0.0.0.0', debug=True, port=8050)
+    
+    
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print('Usage: arbitrage.py (poll|plot|last)')
@@ -185,6 +291,8 @@ if __name__ == '__main__':
         plot_pairs(['BTC-IDR', 'ETH-IDR'], 1)
     elif sys.argv[1]=='last':
         last_price(['BTC-IDR', 'ETH-IDR'])
+    elif sys.argv[1]=='serve':
+        serve()
     else:
         assert False
         
