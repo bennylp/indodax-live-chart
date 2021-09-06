@@ -46,7 +46,11 @@ class Quote:
 
 class Indodax:
     def get_all_quotes(self, dtime):
-        req = requests.get('https://indodax.com/api/summaries')
+        try:
+            req = requests.get('https://indodax.com/api/summaries')
+        except:
+            print('Error')
+            return None
         doc = req.json()
         quotes = []
         for xpair, data in doc['tickers'].items():
@@ -66,7 +70,11 @@ class Indodax:
 
 class Coinbase:
     def get_all_quotes(self, dtime):
-        req = requests.get('https://www.coinbase.com/api/v2/assets/prices/?base=IDR')
+        try:
+            req = requests.get('https://www.coinbase.com/api/v2/assets/prices/?base=IDR')
+        except:
+            print('Error')
+            return None
         doc = req.json()
         quotes = []
         for data in doc['data']:
@@ -91,6 +99,8 @@ def get_all_quotes(dtime):
     list_of_quotes = []
     for exchange in exchanges.values():
         quotes = exchange.get_all_quotes(dtime)
+        if quotes is None:
+            return None
         list_of_quotes.append(quotes)
     
     return pd.concat(list_of_quotes)
@@ -103,6 +113,8 @@ def update_quotes(dtime):
         df = None
     
     update = get_all_quotes(dtime)
+    if update is None:
+        return
     if df is None:
         df = update
     else:
@@ -173,7 +185,7 @@ def poll():
     ts = wait_update()
 
     while True:
-        df = update_quotes(pd.Timestamp.fromtimestamp(ts))
+        update_quotes(pd.Timestamp.fromtimestamp(ts))
         ts = wait_update()
 
 
