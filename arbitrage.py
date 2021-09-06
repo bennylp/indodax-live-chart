@@ -17,7 +17,7 @@ import pandas as pd
 
 if sys.platform=='win32':
     DIR = "C:/Users/bennylp/Desktop/GoogleDrive-Stosia/Work/Projects/coin-applet"
-elif sys.platorm=='linux':
+elif sys.platform=='linux':
     DIR = '/home/bennylp/Desktop/GoogleDrive-Stosia/Work/Projects/coin-applet'
 else:
     assert False, "Unknown platform"
