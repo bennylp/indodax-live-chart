@@ -212,14 +212,15 @@ def render_graph(input_interval, input_pair, n_intervals):
         df = df.droplevel('pair')
         
         results = []
+        max_rows = 200
         for exchange, df in df.groupby(level='exchange'):
             if input_interval != '01min':
                 df1 = df.resample(input_interval, level='dtime',closed='right', label='right').last()
-                df1 = df1.iloc[-720:]
+                df1 = df1.iloc[-max_rows:]
                 df1 = df1.reset_index()
                 df1['exchange'] = exchange
             else:
-                df1 = df.reset_index().iloc[-1440:]
+                df1 = df.reset_index().iloc[-max_rows:]
                 
             results.append(df1)
     
@@ -256,7 +257,7 @@ def serve():
                         dbc.Label("Pair:", className="mr-2"),
                         dcc.RadioItems(id='input_pair',
                                        options=[{'label': i, 'value': i} for i in sorted(all_pairs)],
-                                       value='BTC-IDR',
+                                       value='ETH-IDR',
                                        className='auto',
                                        #searchable=False,
                                        labelStyle={"padding-right": "10px"},
@@ -289,7 +290,7 @@ def serve():
         ]
     )
     app.layout = dbc.Container(main_div)
-    app.run_server(host='0.0.0.0', debug=True, port=8050)
+    app.run_server(host='0.0.0.0', debug=False, port=8050)
     
     
 if __name__ == '__main__':
