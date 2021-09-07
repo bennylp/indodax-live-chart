@@ -15,7 +15,7 @@ from dash.dependencies import Input, Output
 import matplotlib
 import requests
 
-import dash_bootstrap_components as dbc
+#import dash_bootstrap_components as dbc
 import matplotlib.pyplot as plt
 import pandas as pd
 import plotly.express as px
@@ -189,22 +189,99 @@ def poll():
         ts = wait_update()
 
 
-app = dash.Dash(__name__, external_stylesheets=[dbc.themes.COSMO],
+app = dash.Dash(__name__, #external_stylesheets=[dbc.themes.COSMO],
                 title='Arbitrage',
                 #suppress_callback_exceptions=True
                 )
 
+def serve():
+    global all_pairs
+    if all_pairs is None:
+        df = pd.read_parquet(FILENAME)
+        df = df.reset_index()[['exchange', 'pair']].drop_duplicates()
+        d = defaultdict(set)
+        for _, row in df.iterrows():
+            d[ row['exchange'] ].add( row['pair'] )
+        for exchange, supported_pairs in d.items():
+            if all_pairs is None:
+                all_pairs = set(supported_pairs)
+            else:
+                all_pairs = all_pairs.intersection(supported_pairs)
+    
+    pairs = ['BTC-IDR', 'ETH-IDR', 'USDC-IDR']
+    pairs += [p for p in sorted(all_pairs) if p not in pairs]
+
+    intervals = ['01min', '03min', '05min', '10min', '15min', '30min', '60min', '01d']
+    children = html.Div([
+        html.Div(
+            [
+                html.Div(
+                        dcc.RadioItems(id='input_pair',
+                                       options=[{'label': i, 'value': i} for i in pairs],
+                                       value='ETH-IDR',
+                                       className='auto',
+                                       #searchable=False,
+                                       labelStyle={"padding-right": "10px",
+                                                   },
+                            ),
+                    style={
+                            'display': 'inline-block',
+                            '*display': 'inline',
+                          }
+                ),
+                html.Div(
+                        dcc.RadioItems(id='input_interval',
+                                       options=[{'label': i, 'value': i} for i in intervals],
+                                       value='01min',
+                                       #searchable=False,
+                                       className='auto',
+                                       labelStyle={"padding-right": "10px",
+                                                   },
+                                ),
+                    style={
+                            'display': 'inline-block',        
+                            '*display': 'inline',
+                          }
+                )
+            ],     
+        ),
+        html.Div(id="the_graph"),
+        dcc.Input(
+            id="latest_price",
+            type=_,
+            value='',
+            readOnly=True,
+            disabled=True,
+        ),
+        html.Div(id='blank-output'),
+        dcc.Interval(
+            id='interval-component',
+            interval=60*1000, # in milliseconds
+            n_intervals=0
+        )        
+    ],
+    )
+
+    #app.layout = dbc.Container(children)
+    app.layout = html.Div(children)
+    app.run_server(host='0.0.0.0', debug=False, port=8050)
+    
+    
 @app.callback(
     Output("the_graph", "children"),
+    Output('latest_price', 'value'),
     Input("input_interval", "value"),
     Input("input_pair", "value"),
     Input('interval-component', 'n_intervals')
 )
 def render_graph(input_interval, input_pair, n_intervals):
+    global app
     children = []
     pairs = [input_pair]
     
     master = pd.read_parquet(FILENAME)
+
+    last_price = None
 
     for pair in pairs:
         df = master
@@ -214,6 +291,9 @@ def render_graph(input_interval, input_pair, n_intervals):
         results = []
         max_rows = 200
         for exchange, df in df.groupby(level='exchange'):
+            if exchange == 'Indodax':
+                last_price = df.iloc[-1]['close']
+                
             if input_interval != '01min':
                 df1 = df.resample(input_interval, level='dtime',closed='right', label='right').last()
                 df1 = df1.iloc[-max_rows:]
@@ -230,69 +310,26 @@ def render_graph(input_interval, input_pair, n_intervals):
                                   config=dict(displayModeBar=False, )
                                   )
                         )
-    latest = 'Latest is: ' + str(master.index.get_level_values('dtime')[-1])
-    children.append(html.Div(latest))
     
-    return children
+    latest_price = f'{input_pair} {int(last_price):,}'
+    latest_time = html.Div('Latest is: ' + str(master.index.get_level_values('dtime')[-1]))
+    
+    children.extend([latest_time])
+    
+    return children, latest_price
 
-def serve():
-    global all_pairs
-    if all_pairs is None:
-        df = pd.read_parquet(FILENAME)
-        df = df.reset_index()[['exchange', 'pair']].drop_duplicates()
-        d = defaultdict(set)
-        for _, row in df.iterrows():
-            d[ row['exchange'] ].add( row['pair'] )
-        for exchange, supported_pairs in d.items():
-            if all_pairs is None:
-                all_pairs = set(supported_pairs)
-            else:
-                all_pairs = all_pairs.intersection(supported_pairs)
-        
-    intervals = ['01min', '03min', '05min', '10min', '15min', '30min', '60min', '01d']
-    main_div = html.Div(
-        [
-        dbc.Form([
-                dbc.FormGroup([
-                        dbc.Label("Pair:", className="mr-2"),
-                        dcc.RadioItems(id='input_pair',
-                                       options=[{'label': i, 'value': i} for i in sorted(all_pairs)],
-                                       value='ETH-IDR',
-                                       className='auto',
-                                       #searchable=False,
-                                       labelStyle={"padding-right": "10px"},
-                            ),
-                    ],
-                    className="w-100",
-                ),
-                dbc.FormGroup([
-                        dbc.Label("Interval:", className="mr-2"),
-                        dcc.RadioItems(id='input_interval',
-                                       options=[{'label': i, 'value': i} for i in intervals],
-                                       value='01min',
-                                       #searchable=False,
-                                       className='auto',
-                                       labelStyle={"padding-right": "10px"},
-                                ),
-                    ],
-                    className="w-75",
-                ),
-                #dbc.Button("Submit", color="primary"),
-            ],            
-            #inline=True,
-        ),
-        html.Div(id="the_graph"),
-        dcc.Interval(
-            id='interval-component',
-            interval=60*1000, # in milliseconds
-            n_intervals=0
-        )        
-        ]
-    )
-    app.layout = dbc.Container(main_div)
-    app.run_server(host='0.0.0.0', debug=False, port=8050)
-    
-    
+
+app.clientside_callback(
+    """
+    function(latest_price) {
+        document.title = latest_price;
+    }
+    """,
+    Output('blank-output', 'children'),
+    Input('latest_price', 'value')
+)
+
+
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print('Usage: arbitrage.py (poll|plot|last)')
