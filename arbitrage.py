@@ -6,7 +6,6 @@ import json
 import os
 import sys
 import time
-import time
 
 from dash import dcc
 from dash import html
@@ -17,8 +16,10 @@ import requests
 
 #import dash_bootstrap_components as dbc
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 
 
 if sys.platform=='win32':
@@ -150,16 +151,16 @@ def plot_pairs(pairs, interval=1):
         df = df.droplevel('pair')
         exchanges = sorted(df.index.get_level_values('exchange').unique())
         for exchange in exchanges:
-            df1 = df[ df.index.get_level_values('exchange')==exchange]
-            df1 = df1.droplevel('exchange')
+            df = df[ df.index.get_level_values('exchange')==exchange]
+            df = df.droplevel('exchange')
             
             if interval != 1:
-                df1 = df1.resample(f'{interval}min', closed='right', label='right').last()
+                df = df.resample(f'{interval}min', closed='right', label='right').last()
                 
-            df1 = df1.iloc[:120]
+            df = df.iloc[:120]
             
-            x = df1.index.get_level_values('dtime')
-            y = df1['close']
+            x = df.index.get_level_values('dtime')
+            y = df['close']
             ax.plot(x, y, label=f'{exchange}')
             
         ax.grid()
@@ -211,10 +212,9 @@ def serve():
     pairs = ['BTC-IDR', 'ETH-IDR', 'USDC-IDR']
     pairs += [p for p in sorted(all_pairs) if p not in pairs]
 
-    intervals = ['01min', '03min', '05min', '10min', '15min', '30min', '60min', '01d']
+    intervals = ['clear', '1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '60 min', '1 d']
     children = html.Div([
-        html.Div(
-            [
+        html.Div([
                 html.Div(
                         dcc.RadioItems(id='input_pair',
                                        options=[{'label': i, 'value': i} for i in pairs],
@@ -223,42 +223,26 @@ def serve():
                                        #searchable=False,
                                        labelStyle={"padding-right": "10px",
                                                    },
-                            ),
-                    style={
-                            'display': 'inline-block',
-                            '*display': 'inline',
-                          }
+                        ),
+                    style={ 'display': 'inline-block', '*display': 'inline', }
                 ),
                 html.Div(
                         dcc.RadioItems(id='input_interval',
                                        options=[{'label': i, 'value': i} for i in intervals],
-                                       value='01min',
+                                       value='1 min',
                                        #searchable=False,
                                        className='auto',
                                        labelStyle={"padding-right": "10px",
                                                    },
-                                ),
-                    style={
-                            'display': 'inline-block',        
-                            '*display': 'inline',
-                          }
+                        ),
+                    style={ 'display': 'inline-block', '*display': 'inline', }
                 )
             ],     
         ),
         html.Div(id="the_graph"),
-        dcc.Input(
-            id="latest_price",
-            type=_,
-            value='',
-            readOnly=True,
-            disabled=True,
-        ),
+        dcc.Input(id="latest_price", type=_, value='', readOnly=True, disabled=True,),
         html.Div(id='blank-output'),
-        dcc.Interval(
-            id='interval-component',
-            interval=60*1000, # in milliseconds
-            n_intervals=0
-        )        
+        dcc.Interval(id='interval-component', interval=60*1000, )        
     ],
     )
 
@@ -275,46 +259,70 @@ def serve():
     Input('interval-component', 'n_intervals')
 )
 def render_graph(input_interval, input_pair, n_intervals):
+    if input_interval=='clear':
+        return  [dcc.Graph(figure=go.Figure())], ''
+    
     global app
     children = []
-    pairs = [input_pair]
     
     master = pd.read_parquet(FILENAME)
 
     last_price = None
 
-    for pair in pairs:
-        df = master
-        df = df[ df.index.get_level_values('pair')==pair ]
-        df = df.droplevel('pair')
-        
-        results = []
-        max_rows = 200
-        for exchange, df in df.groupby(level='exchange'):
-            if exchange == 'Indodax':
-                last_price = df.iloc[-1]['close']
-                
-            if input_interval != '01min':
-                df1 = df.resample(input_interval, level='dtime',closed='right', label='right').last()
-                df1 = df1.iloc[-max_rows:]
-                df1 = df1.reset_index()
-                df1['exchange'] = exchange
-            else:
-                df1 = df.reset_index().iloc[-max_rows:]
-                
-            results.append(df1)
+    pair = input_pair
+    df = master
+    df = df[ df.index.get_level_values('pair')==pair ]
+    df = df.droplevel('pair')
     
-        df = pd.concat(results)
-        fig = px.line(df, x='dtime', y='close', color='exchange', title=pair)
-        children.append(dcc.Graph(figure=fig, 
-                                  config=dict(displayModeBar=False, )
-                                  )
-                        )
+    cs_datas = []
+    cs_data = None
+    
+    max_rows = 120
+    for exchange, df in df.groupby(level='exchange'):
+        if exchange == 'Indodax':
+            last_price = df.iloc[-1]['close']
+        
+        interval_min = pd.Timedelta(input_interval).total_seconds() // 60
+        if interval_min != 1:
+            df = df.resample(input_interval, level='dtime',closed='right', label='right')['close'] \
+                   .agg(['first', 'last', 'max', 'min'])
+            df = df.iloc[-max_rows:]
+            df = df.rename(columns={'first': 'open', 'last': 'close', 'max': 'high', 'min': 'low'})
+            df = df.reset_index()
+            df['exchange'] = exchange
+        else:
+            df['open'] = df['close'].shift()
+            df['high'] = df[['open', 'close']].max(axis=1)
+            df['low'] = df[['open', 'close']].min(axis=1)
+            df = df.reset_index().iloc[-max_rows:]
+        
+        df['dtime_diff'] = df['dtime'].diff().dt.total_seconds()
+        df.loc[ df['dtime_diff'] > (interval_min+3)*60, 'open'] = np.NaN
+        
+        cs_data = go.Candlestick(x=df['dtime'],
+                                 open=df['open'],
+                                 high=df['high'],
+                                 low=df['low'],
+                                 close=df['close'], 
+                                 opacity=0.9 if exchange=='Indodax' else 1,
+                                 increasing_line_color= 'green' if exchange=='Indodax' else 'lightgray', 
+                                 decreasing_line_color= 'red' if exchange=='Indodax' else 'darkgray',
+                                 name=exchange)
+        cs_datas.append(cs_data)
     
     latest_price = f'{input_pair} {int(last_price):,}'
-    latest_time = html.Div('Latest is: ' + str(master.index.get_level_values('dtime')[-1]))
+    fig = go.Figure(data=cs_datas)
+    fig.update_layout(xaxis_rangeslider_visible=False,
+                      title=latest_price,)
     
-    children.extend([latest_time])
+    t = int(time.time())
+    children = [dcc.Graph(figure=fig, 
+                          config=dict(displayModeBar=False, ),
+                          id=f'the_dcc_graph{t}',
+                          clear_on_unhover=True,
+                         ),
+                html.Div('Latest is: ' + str(master.index.get_level_values('dtime')[-1]))
+               ]
     
     return children, latest_price
 
