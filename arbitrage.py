@@ -212,19 +212,21 @@ def serve():
     pairs = ['BTC-IDR', 'ETH-IDR', 'USDC-IDR']
     pairs += [p for p in sorted(all_pairs) if p not in pairs]
 
-    intervals = ['clear', '1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '60 min', '1 d']
+    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '60 min', '1 d']
     children = html.Div([
         html.Div([
                 html.Div(
-                        dcc.RadioItems(id='input_pair',
+                        # RadioItems
+                        dcc.Dropdown(id='input_pair',
                                        options=[{'label': i, 'value': i} for i in pairs],
                                        value='ETH-IDR',
                                        className='auto',
                                        #searchable=False,
-                                       labelStyle={"padding-right": "10px",
-                                                   },
+                                       #labelStyle={"padding-right": "10px",
+                                       #            },
+                                       style={'width': '150px', 'vertical-align': 'middle'}
                         ),
-                    style={ 'display': 'inline-block', '*display': 'inline', }
+                    style={ 'display': 'inline-block', '*display': 'inline', 'vertical-align': 'middle'}
                 ),
                 html.Div(
                         dcc.RadioItems(id='input_interval',
@@ -235,9 +237,10 @@ def serve():
                                        labelStyle={"padding-right": "10px",
                                                    },
                         ),
-                    style={ 'display': 'inline-block', '*display': 'inline', }
+                    style={ 'display': 'inline-block', '*display': 'inline', 'vertical-align': 'middle'}
                 )
-            ],     
+            ],  
+            style={'vertical-align': 'middle'},   
         ),
         html.Div(id="the_graph"),
         dcc.Input(id="latest_price", type=_, value='', readOnly=True, disabled=True,),
@@ -259,9 +262,6 @@ def serve():
     Input('interval-component', 'n_intervals')
 )
 def render_graph(input_interval, input_pair, n_intervals):
-    if input_interval=='clear':
-        return  [dcc.Graph(figure=go.Figure())], ''
-    
     global app
     children = []
     
