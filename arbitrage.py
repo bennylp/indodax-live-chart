@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from Cython.Tempita._tempita import url
 from collections import defaultdict
 from datetime import datetime
 from doctest import master
@@ -14,7 +15,6 @@ from dash.dependencies import Input, Output
 import matplotlib
 import requests
 
-#import dash_bootstrap_components as dbc
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -22,6 +22,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
+#import dash_bootstrap_components as dbc
 if sys.platform=='win32':
     DIR = "C:/Users/bennylp/Desktop/GoogleDrive-Stosia/Work/Projects/coin-applet"
 elif sys.platform=='linux':
@@ -31,26 +32,19 @@ else:
 
 
 FILENAME = os.path.join(DIR, 'market.parquet')
+HIST_FILENAME = os.path.join(DIR, 'history.parquet')
 all_pairs = None
 
-
-class Quote:
-    def __init__(self, xchange, pair, t, h, l, c, value):
-        self.xchange = xchange
-        self.pair = pair
-        self.t = t
-        self.h = float(h)
-        self.l = float(l)
-        self.c = float(c)
-        self.value = value
-        
 
 class Indodax:
     def get_all_quotes(self, dtime):
         try:
-            req = requests.get('https://indodax.com/api/summaries')
-        except:
-            print('Error')
+            req = requests.get('https://indodax.com/api/summaries', timeout=30)
+            req.raise_for_status()
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            print(str(e))
             return None
         doc = req.json()
         quotes = []
@@ -72,9 +66,12 @@ class Indodax:
 class Coinbase:
     def get_all_quotes(self, dtime):
         try:
-            req = requests.get('https://www.coinbase.com/api/v2/assets/prices/?base=IDR')
-        except:
-            print('Error')
+            req = requests.get('https://www.coinbase.com/api/v2/assets/prices/?base=IDR', timeout=30)
+            req.raise_for_status()
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            print(str(e))
             return None
         doc = req.json()
         quotes = []
@@ -83,18 +80,49 @@ class Coinbase:
             quote = {'exchange': self.__class__.__name__, 
                      'pair': f'{pair[0]}-{pair[1]}',
                      'dtime': dtime, 
-                     #'high': float(data['high']), 
-                     #'low': float(data['low']), 
                      'close': float(data['prices']['latest']), 
-                     #'value': float(data[f'vol_{pair[1].lower()}'])
                      }
             quotes.append(quote)
         
         return pd.DataFrame(quotes).set_index(['exchange', 'pair', 'dtime'])
 
+    def get_historical(self, pair_info):
+        end = pd.Timestamp('2021-09-06 00:00:00')
+        
+        pair = (pair_info[0], pair_info[1])
+        url = f'https://www.coinbase.com/api/v2/assets/prices/{pair_info[2]}?base=IDR'
+        
+        try:
+            req = requests.get(url, timeout=30)
+            req.raise_for_status()
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            print(str(e))
+            return None
+
+        doc = req.json()
+        assert doc['data']['base'] == pair[0]
+        assert doc['data']['currency'] == pair[1]
+        datas = []
+        
+        for field in ['hour', 'day', 'week', 'month', 'year', 'all']:
+            prices = doc['data']['prices'][field]['prices']
+            for item in prices:
+                data = {'exchange': self.__class__.__name__,
+                        'pair': f'{pair[0]}-{pair[1]}', 
+                        'dtime': pd.Timestamp.fromtimestamp(item[1]),
+                        'close': float(item[0])}
+                datas.append( data )
+                
+        indices = ['exchange', 'pair', 'dtime']
+        df = pd.DataFrame(datas).sort_values(indices)
+        df = df.drop_duplicates(indices)
+        df = df.set_index(indices)
+        return df
+        
 
 exchanges = {inst.__class__.__name__: inst for inst in [Indodax(), Coinbase()]}
-
 
 def get_all_quotes(dtime):
     list_of_quotes = []
@@ -128,9 +156,11 @@ def update_quotes(dtime):
 def wait_update():
     ts = time.time()
     
-    while int(ts) % 60:
+    while True:
         dtime = pd.Timestamp.fromtimestamp(ts)
         print(f"{dtime.strftime('%H:%M:%S')}..", end=' \r')
+        if int(ts) % 60 == 0:
+            break
         next_sec = round(ts, 0) + 1
         time.sleep(next_sec - ts)
         
@@ -138,40 +168,6 @@ def wait_update():
     print('')
 
     return int(ts)
-
-
-def plot_pairs(pairs, interval=1):
-    nrows = len(pairs)
-    fig, axs = plt.subplots(nrows, 1, figsize=(12, 3*nrows))
-    master = pd.read_parquet(FILENAME)
-    
-    for pair, ax in zip(pairs, axs):
-        df = master
-        df = df[ df.index.get_level_values('pair')==pair ]
-        df = df.droplevel('pair')
-        exchanges = sorted(df.index.get_level_values('exchange').unique())
-        for exchange in exchanges:
-            df = df[ df.index.get_level_values('exchange')==exchange]
-            df = df.droplevel('exchange')
-            
-            if interval != 1:
-                df = df.resample(f'{interval}min', closed='right', label='right').last()
-                
-            df = df.iloc[:120]
-            
-            x = df.index.get_level_values('dtime')
-            y = df['close']
-            ax.plot(x, y, label=f'{exchange}')
-            
-        ax.grid()
-        ax.legend()
-        ax.set_title(pair)
-        ax.get_yaxis().set_major_formatter(
-            matplotlib.ticker.FuncFormatter(lambda x, p: format(int(x), ',')))
-    
-    fig.tight_layout()
-    plt.savefig(f'arbitrage{interval:02d}.png')
-    #plt.show()
 
 
 def last_price(pairs):
@@ -182,7 +178,6 @@ def last_price(pairs):
     
     
 def poll():
-    pairs = ['BTC-IDR', 'ETH-IDR']
     ts = wait_update()
 
     while True:
@@ -190,6 +185,52 @@ def poll():
         ts = wait_update()
 
 
+def update_historical():
+    if os.path.exists(HIST_FILENAME):
+        df = pd.read_parquet(HIST_FILENAME)
+        dfs = [df]
+        old_len = len(df)
+    else:
+        dfs = []
+        old_len = 0
+    
+    pair_infos = [('BTC', 'bitcoin'), 
+                  ('ETH', 'ethereum'), 
+                  ('ADA', 'cardano'), 
+                  ('BNB', 'binance-coin'),
+                  ('SOL', 'solana'),
+                  ('USDT', 'tether'),
+                  ('DOGE', 'dogecoin'),
+                  ('USDC', 'usdc'),
+                  ('XRP', 'xrp'),
+                  ('DOT', 'polkadot'),
+                  ('BCH', 'bitcoin-cash'),
+                  ('LTC', 'litecoin'),
+                  ('ALGO', 'algorand'),
+                  ('FTT', 'ftx-token')
+                  ]
+    
+    exchange = Coinbase()
+    for pair in pair_infos:
+        pair = (pair[0], 'IDR', pair[1])
+        print(f'{pair[0]}-{pair[1]}..', end=' ')
+        sys.stdout.flush()
+        df = exchange.get_historical(pair)
+        if df is not None and len(df):
+            dfs.append(df)
+        time.sleep(0.5)
+
+    print('\nDone')
+    df = pd.concat(dfs).reset_index()
+    indices = ['exchange', 'pair', 'dtime']
+    df = df.drop_duplicates(indices)
+    df = df.sort_values(indices).set_index(indices)
+    new_len = len(df)
+    print(f'Added {new_len-old_len} new rows')
+    df.to_parquet(HIST_FILENAME)
+    return df
+        
+    
 app = dash.Dash(__name__, #external_stylesheets=[dbc.themes.COSMO],
                 title='Arbitrage',
                 #suppress_callback_exceptions=True
@@ -212,7 +253,7 @@ def serve():
     pairs = ['BTC-IDR', 'ETH-IDR', 'USDC-IDR']
     pairs += [p for p in sorted(all_pairs) if p not in pairs]
 
-    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '60 min', '1 d']
+    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '60 min', '1 d', '7 d']
     children = html.Div([
         html.Div([
                 html.Div(
@@ -265,7 +306,18 @@ def render_graph(input_interval, input_pair, n_intervals):
     global app
     children = []
     
+    interval_min = pd.Timedelta(input_interval).total_seconds() // 60
+    
     master = pd.read_parquet(FILENAME)
+
+    if interval_min >= 1440:
+        historical = pd.read_parquet(HIST_FILENAME)
+        master = pd.concat([master, historical])
+        master = master[ master.index.get_level_values('pair')==input_pair ]
+        master = master.reset_index()
+        indices = ['exchange', 'pair', 'dtime']
+        master = master.sort_values(indices).drop_duplicates(indices)
+        master = master.set_index(indices)
 
     last_price = None
 
@@ -282,9 +334,8 @@ def render_graph(input_interval, input_pair, n_intervals):
         if exchange == 'Indodax':
             last_price = df.iloc[-1]['close']
         
-        interval_min = pd.Timedelta(input_interval).total_seconds() // 60
         if interval_min != 1:
-            df = df.resample(input_interval, level='dtime',closed='right', label='right')['close'] \
+            df = df.resample(input_interval, level='dtime',closed='left', label='left')['close'] \
                    .agg(['first', 'last', 'max', 'min'])
             df = df.iloc[-max_rows:]
             df = df.rename(columns={'first': 'open', 'last': 'close', 'max': 'high', 'min': 'low'})
@@ -351,7 +402,8 @@ if __name__ == '__main__':
         last_price(['BTC-IDR', 'ETH-IDR'])
     elif sys.argv[1]=='serve':
         serve()
+    elif sys.argv[1]=='hist':
+        update_historical()
     else:
         assert False
-        
-    
+
