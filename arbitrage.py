@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from Cython.Tempita._tempita import url
 from collections import defaultdict
 from datetime import datetime
 from doctest import master
@@ -8,6 +7,7 @@ import os
 import sys
 import time
 
+from Cython.Tempita._tempita import url
 from dash import dcc
 from dash import html
 import dash
@@ -106,7 +106,7 @@ class Coinbase:
         assert doc['data']['currency'] == pair[1]
         datas = []
         
-        for field in ['hour', 'day', 'week', 'month', 'year', 'all']:
+        for field in ['month', 'year', 'all']:
             prices = doc['data']['prices'][field]['prices']
             for item in prices:
                 data = {'exchange': self.__class__.__name__,
@@ -187,9 +187,9 @@ def poll():
 
 def update_historical():
     if os.path.exists(HIST_FILENAME):
-        df = pd.read_parquet(HIST_FILENAME)
-        dfs = [df]
-        old_len = len(df)
+        old_hist = pd.read_parquet(HIST_FILENAME)
+        dfs = [old_hist]
+        old_len = len(old_hist)
     else:
         dfs = []
         old_len = 0
@@ -227,6 +227,8 @@ def update_historical():
     df = df.sort_values(indices).set_index(indices)
     new_len = len(df)
     print(f'Added {new_len-old_len} new rows')
+    if new_len-old_len > 0:
+        diff = df.drop(index=old_hist.index)
     df.to_parquet(HIST_FILENAME)
     return df
         
@@ -250,10 +252,10 @@ def serve():
             else:
                 all_pairs = all_pairs.intersection(supported_pairs)
     
-    pairs = ['BTC-IDR', 'ETH-IDR', 'USDC-IDR']
+    pairs = ['BTC-IDR', 'ETH-IDR', 'DOGE-IDR']
     pairs += [p for p in sorted(all_pairs) if p not in pairs]
 
-    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '60 min', '1 d', '7 d']
+    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '1h', '3h', '6h', '1d', '3d', '7d']
     children = html.Div([
         html.Div([
                 html.Div(
@@ -310,7 +312,7 @@ def render_graph(input_interval, input_pair, n_intervals):
     
     master = pd.read_parquet(FILENAME)
 
-    if interval_min >= 1440:
+    if interval_min >= 6*60:
         historical = pd.read_parquet(HIST_FILENAME)
         master = pd.concat([master, historical])
         master = master[ master.index.get_level_values('pair')==input_pair ]
@@ -391,7 +393,7 @@ app.clientside_callback(
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
-        print('Usage: arbitrage.py (poll|plot|last)')
+        print('Usage: arbitrage.py (poll|serve|hist)')
         sys.exit(1)
         
     if sys.argv[1]=='poll':
