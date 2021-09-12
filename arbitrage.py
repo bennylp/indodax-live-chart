@@ -106,7 +106,7 @@ class Coinbase:
         assert doc['data']['currency'] == pair[1]
         datas = []
         
-        for field in ['month', 'year', 'all']:
+        for field in ['year', 'all']: # 'month', 
             prices = doc['data']['prices'][field]['prices']
             for item in prices:
                 data = {'exchange': self.__class__.__name__,
@@ -229,6 +229,13 @@ def update_historical():
     print(f'Added {new_len-old_len} new rows')
     if new_len-old_len > 0:
         diff = df.drop(index=old_hist.index)
+        oldest = diff.index.get_level_values('dtime').min()
+        newest = diff.index.get_level_values('dtime').max()
+        diff_pairs = diff.index.get_level_values('pair').unique()
+        print('Oldest time:', oldest)
+        print('Newest time:', newest)
+        print('Pairs:', diff_pairs)
+
     df.to_parquet(HIST_FILENAME)
     return df
         
