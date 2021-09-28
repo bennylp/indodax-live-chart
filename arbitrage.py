@@ -106,7 +106,7 @@ class Coinbase:
         assert doc['data']['currency'] == pair[1]
         datas = []
         
-        for field in ['year', 'all']: # 'month', 
+        for field in ['month', 'year', 'all']: # 
             prices = doc['data']['prices'][field]['prices']
             for item in prices:
                 data = {'exchange': self.__class__.__name__,
@@ -207,7 +207,25 @@ def update_historical():
                   ('BCH', 'bitcoin-cash'),
                   ('LTC', 'litecoin'),
                   ('ALGO', 'algorand'),
-                  ('FTT', 'ftx-token')
+                  ('FTT', 'ftx-token'),
+                  ('MATIC', 'polygon'),
+                  ('THETA', 'theta'),
+                  ('WAVES', 'waves'),
+                  ('XTZ', 'tezos'),
+                  ('UNI', 'uniswap'),
+                  ('LINK', 'chainlink'),
+                  ('ATOM', 'cosmos'),
+                  ('XLM', 'stellar'),
+                  ('DAI', 'dai'),
+                  ('TRX', 'tron'),
+                  ('ETC', 'ethereum-classic'),
+                  ('FIL', 'filecoin'),
+                  ('AAVE', 'aave'),
+                  ('ALT', 'alitas'),
+                  ('AXS', 'axie-infinity'),
+                  ('BSV', 'bitcoin-sv'),
+                  ('BUSD', 'binance-usd'),
+                  ('CAKE', 'pancakeswap'),
                   ]
     
     exchange = Coinbase()
@@ -236,6 +254,12 @@ def update_historical():
         print('Newest time:', newest)
         print('Pairs:', diff_pairs)
 
+        for pair, subset in diff.groupby(level='pair'):
+            print(pair,':')
+            print(f'{pair} ({len(subset)} rows):')
+            print(subset.head())
+            print('')
+
     df.to_parquet(HIST_FILENAME)
     return df
         
@@ -259,10 +283,10 @@ def serve():
             else:
                 all_pairs = all_pairs.intersection(supported_pairs)
     
-    pairs = ['BTC-IDR', 'ETH-IDR', 'DOGE-IDR']
+    pairs = ['ALGO-IDR', 'BTC-IDR', 'ETH-IDR', 'DOGE-IDR']
     pairs += [p for p in sorted(all_pairs) if p not in pairs]
 
-    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '1h', '3h', '6h', '1d', '3d', '7d']
+    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '1h', '3h', '6h', '1d', '3d', '7d', '30d']
     children = html.Div([
         html.Div([
                 html.Div(
@@ -271,7 +295,7 @@ def serve():
                                        options=[{'label': i, 'value': i} for i in pairs],
                                        value='ETH-IDR',
                                        className='auto',
-                                       #searchable=False,
+                                       searchable=False,
                                        #labelStyle={"padding-right": "10px",
                                        #            },
                                        style={'width': '150px', 'vertical-align': 'middle'}
@@ -281,7 +305,7 @@ def serve():
                 html.Div(
                         dcc.RadioItems(id='input_interval',
                                        options=[{'label': i, 'value': i} for i in intervals],
-                                       value='1 min',
+                                       value='5 min',
                                        #searchable=False,
                                        className='auto',
                                        labelStyle={"padding-right": "10px",
@@ -370,7 +394,7 @@ def render_graph(input_interval, input_pair, n_intervals):
                                  name=exchange)
         cs_datas.append(cs_data)
     
-    latest_price = f'{input_pair} {int(last_price):,}'
+    latest_price = f'{input_pair} {int(last_price):,}' if last_price else '-err-'
     fig = go.Figure(data=cs_datas)
     fig.update_layout(xaxis_rangeslider_visible=False,
                       title=latest_price,)
