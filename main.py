@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 from collections import defaultdict
-from datetime import datetime
 from doctest import master
-import json
 import os
 import sys
 import time
@@ -16,13 +14,15 @@ import requests
 
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 
 
 DIR = 'data'
 FILENAME = os.path.join(DIR, 'market.parquet')
 HIST_FILENAME = os.path.join(DIR, 'history.parquet')
+NBARS = 120
+INTERVALS = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '1h', '3h', '6h', 
+             '1d', '3d', '7d', '30d']
 all_pairs = None
 
 
@@ -160,13 +160,6 @@ def wait_update():
     return int(ts)
 
 
-def last_price(pairs):
-    df = pd.read_parquet(FILENAME)
-    df = df[ df.index.get_level_values('pair').isin(pairs) ]
-    df = df.groupby(['exchange', 'pair']).last()
-    print(df)
-    
-    
 def poll():
     ts = wait_update()
 
@@ -276,7 +269,6 @@ def serve():
     pairs = ['ALGO-IDR', 'BTC-IDR', 'ETH-IDR', 'DOGE-IDR']
     pairs += [p for p in sorted(all_pairs) if p not in pairs]
 
-    intervals = ['1 min', '3 min', '5 min', '10 min', '15 min', '30 min', '1h', '3h', '6h', '1d', '3d', '7d', '30d']
     children = html.Div([
         html.Div([
                 html.Div(
@@ -294,7 +286,7 @@ def serve():
                 ),
                 html.Div(
                         dcc.RadioItems(id='input_interval',
-                                       options=[{'label': i, 'value': i} for i in intervals],
+                                       options=[{'label': i, 'value': i} for i in INTERVALS],
                                        value='5 min',
                                        #searchable=False,
                                        className='auto',
@@ -307,7 +299,8 @@ def serve():
             style={'vertical-align': 'middle'},   
         ),
         html.Div(id="the_graph"),
-        dcc.Input(id="latest_price", type=_, value='', readOnly=True, disabled=True,),
+        dcc.Input(id="latest_price", name="latest_price", type=_, value='', readOnly=True, disabled=True, 
+                  style={'visibility': 'hidden'}),
         html.Div(id='blank-output'),
         dcc.Interval(id='interval-component', interval=60*1000, )        
     ],
@@ -328,6 +321,7 @@ def serve():
 def render_graph(input_interval, input_pair, n_intervals):
     global app
     children = []
+    t0 = time.time()
     
     interval_min = pd.Timedelta(input_interval).total_seconds() // 60
     
@@ -352,7 +346,6 @@ def render_graph(input_interval, input_pair, n_intervals):
     cs_datas = []
     cs_data = None
     
-    max_rows = 120
     for exchange, df in df.groupby(level='exchange'):
         if exchange == 'Indodax':
             last_price = df.iloc[-1]['close']
@@ -360,7 +353,7 @@ def render_graph(input_interval, input_pair, n_intervals):
         if interval_min != 1:
             df = df.resample(input_interval, level='dtime',closed='left', label='left')['close'] \
                    .agg(['first', 'last', 'max', 'min'])
-            df = df.iloc[-max_rows:]
+            df = df.iloc[-NBARS:]
             df = df.rename(columns={'first': 'open', 'last': 'close', 'max': 'high', 'min': 'low'})
             df = df.reset_index()
             df['exchange'] = exchange
@@ -368,7 +361,7 @@ def render_graph(input_interval, input_pair, n_intervals):
             df['open'] = df['close'].shift()
             df['high'] = df[['open', 'close']].max(axis=1)
             df['low'] = df[['open', 'close']].min(axis=1)
-            df = df.reset_index().iloc[-max_rows:]
+            df = df.reset_index().iloc[-NBARS:]
         
         df['dtime_diff'] = df['dtime'].diff().dt.total_seconds()
         df.loc[ df['dtime_diff'] > (interval_min+3)*60, 'open'] = np.NaN
@@ -390,12 +383,14 @@ def render_graph(input_interval, input_pair, n_intervals):
                       title=latest_price,)
     
     t = int(time.time())
+    elapsed = t - t0
     children = [dcc.Graph(figure=fig, 
                           config=dict(displayModeBar=False, ),
                           id=f'the_dcc_graph{t}',
                           clear_on_unhover=True,
                          ),
-                html.Div('Latest is: ' + str(master.index.get_level_values('dtime')[-1]))
+                html.Div('Latest update: ' + str(master.index.get_level_values('dtime')[-1])),
+                html.Div(f'Served in {elapsed:.3f}s'),
                ]
     
     return children, latest_price
@@ -412,21 +407,61 @@ app.clientside_callback(
 )
 
 
+def compact():
+    if not os.path.exists(FILENAME):
+        print('Data not found')
+        return
+
+    print('Compacting, please wait..')
+    now = pd.Timestamp.now()
+    t0 = time.time()
+    master = pd.read_parquet(FILENAME)
+    master = master.sort_values(['exchange', 'pair', 'dtime'])
+    resample_specs = [('1 min', '1 day'), ('5 min', '7 days'), ('15 min', '20 days'),
+                      ('1 h', '150 days'), ('1 d', '10000 days'),
+                     ]
+    dfs = []
+
+    for interval, duration in resample_specs:
+        if not len(master):
+            break
+        interval = pd.Timedelta(interval)
+        duration = pd.Timedelta(duration)
+        oldest = now - duration
+        df = master.loc[(slice(None), slice(None), slice(oldest,None)),:]
+        if not len(df):
+            continue
+        master = master.loc[(slice(None), slice(None), slice(None,oldest)),:]
+        if interval.total_seconds() == 60:
+            dfs.append(df)
+            continue
+
+        for idx, subset in df.groupby(level=['exchange', 'pair']):
+            subset = subset.resample(interval, level='dtime', closed='left', label='left').agg('last')
+            subset = subset.reset_index()
+            subset['exchange'] = idx[0]
+            subset['pair'] = idx[1]
+            subset = subset.set_index(['exchange', 'pair', 'dtime'])
+            dfs.append(subset)
+
+    df = pd.concat(dfs).sort_values(['exchange', 'pair', 'dtime'])
+    df.to_parquet(FILENAME)
+    print(f'Done.\nElapsed: {time.time()-t0:.3f}s')
+
+
 if __name__ == '__main__':
     if len(sys.argv) != 2:
-        print('Usage: arbitrage.py (poll|serve|hist)')
+        print('Usage: arbitrage.py (poll|serve|hist|compact)')
         sys.exit(1)
         
     if sys.argv[1]=='poll':
         poll()
-    elif sys.argv[1]=='plot':
-        plot_pairs(['BTC-IDR', 'ETH-IDR'], 1)
-    elif sys.argv[1]=='last':
-        last_price(['BTC-IDR', 'ETH-IDR'])
     elif sys.argv[1]=='serve':
         serve()
     elif sys.argv[1]=='hist':
         update_historical()
+    elif sys.argv[1]=='compact':
+        compact()
     else:
         assert False
 
