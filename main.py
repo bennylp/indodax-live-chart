@@ -12,25 +12,15 @@ from dash import dcc
 from dash import html
 import dash
 from dash.dependencies import Input, Output
-import matplotlib
 import requests
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
 
-#import dash_bootstrap_components as dbc
-if sys.platform=='win32':
-    DIR = "C:/Users/bennylp/Desktop/GoogleDrive-Stosia/Work/Projects/coin-applet"
-elif sys.platform=='linux':
-    DIR = '/home/bennylp/Desktop/GoogleDrive-Stosia/Work/Projects/coin-applet'
-else:
-    assert False, "Unknown platform"
-
-
+DIR = 'data'
 FILENAME = os.path.join(DIR, 'market.parquet')
 HIST_FILENAME = os.path.join(DIR, 'history.parquet')
 all_pairs = None
