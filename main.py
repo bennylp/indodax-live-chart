@@ -266,7 +266,7 @@ def serve():
             else:
                 all_pairs = all_pairs.intersection(supported_pairs)
     
-    pairs = ['ALGO-IDR', 'BTC-IDR', 'ETH-IDR', 'DOGE-IDR']
+    pairs = ['ADA-IDR', 'ALGO-IDR', 'BTC-IDR', 'ETH-IDR']
     pairs += [p for p in sorted(all_pairs) if p not in pairs]
 
     children = html.Div([
